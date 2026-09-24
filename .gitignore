@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .vscode/
 *.log
+*.db
+test_*.pdf

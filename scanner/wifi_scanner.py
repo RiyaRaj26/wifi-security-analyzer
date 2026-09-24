@@ -91,6 +91,8 @@ class WiFiScanner:
                 bssid = ":".join(f"{b:02x}" for b in bssid)
             elif not bssid or bssid == '00:00:00:00:00:00':
                 bssid = "00:11:22:33:44:55" # fallback helper
+            else:
+                bssid = str(bssid).strip().rstrip(":")
             
             # Skip duplicates in this single scan
             if bssid in seen_bssids:
@@ -104,9 +106,6 @@ class WiFiScanner:
                 is_hidden = True
             
             # Map RSSI (typically raw signal percentage or dBm depending on PyWiFi version)
-            # PyWiFi raw signal on Windows is sometimes quality percentage (0-100) or dBm.
-            # Let's map it safely. If it's positive or between 0 and 100, we treat it as quality
-            # and estimate dBm. If it's negative, it's dBm.
             raw_sig = profile.signal
             if raw_sig > 0:
                 quality = min(raw_sig, 100)
@@ -116,17 +115,25 @@ class WiFiScanner:
                 quality = min(max(2 * (rssi + 100), 0), 100) # simple conversion
             
             # Parse frequency & channel
-            # Note: PyWiFi doesn't always provide frequency/channel directly on all platforms.
-            # If freq is missing or 0, we can estimate it or default to a 2.4GHz channel.
             freq = getattr(profile, 'freq', 0)
+            if freq > 100000:
+                freq = freq // 1000 # Convert kHz (e.g., 2412000) to MHz (2412)
             if not freq:
-                # Estimate a random/placeholder channel for mock purposes or leave 2412 (Ch 1)
                 freq = 2412
             
             channel = self._frequency_to_channel(freq)
             
             # Security types parsing
             sec_type, encryption = self._parse_security(profile)
+            
+            # If encryption is None/Unknown but WPA2/WPA3 is detected, default to AES-CCMP / GCMP
+            if encryption in ["None", "Unknown"]:
+                if "WPA3" in sec_type:
+                    encryption = "AES-GCMP"
+                elif "WPA2" in sec_type:
+                    encryption = "AES-CCMP"
+                elif "WPA" in sec_type:
+                    encryption = "TKIP"
             
             networks.append(WiFiNetwork(
                 ssid=ssid,
@@ -145,6 +152,8 @@ class WiFiScanner:
         return networks
 
     def _frequency_to_channel(self, freq_mhz: int) -> int:
+        if freq_mhz > 100000:
+            freq_mhz = freq_mhz // 1000
         if freq_mhz == 2484:
             return 14
         elif 2407 < freq_mhz < 2484:
@@ -152,7 +161,7 @@ class WiFiScanner:
         elif 5030 <= freq_mhz <= 5900:
             return (freq_mhz - 5000) // 5
         # Fallback to a common 2.4GHz channel if invalid
-        return random.choice([1, 6, 11])
+        return 1
 
     def _parse_security(self, profile) -> tuple[str, str]:
         # PyWiFi security constants:
